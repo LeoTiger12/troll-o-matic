@@ -1,0 +1,478 @@
+#!/bin/bash
+
+# Make sure the script is root
+if [ "$EUID" -ne 0 ]; then
+  echo 'Please run as root.'
+  exit 1
+fi
+
+
+# Make sure 'dialog' is installed
+if ! [ -e /usr/bin/dialog ]; then
+  echo "Couldn't find 'dialog' binary in /usr/bin."
+  echo "You can usually install the 'dialog' package."
+
+  exit 1
+fi
+
+
+# Make sure 'play' is installed
+if ! [ -e /usr/bin/play ]; then
+  echo "Couldn't find 'play' binary in /usr/bin."
+  echo "You can usually install the 'sox' package."
+
+  exit 1
+fi
+
+
+# Make sure 'zenity' is installed
+#if ! [ -e /usr/bin/zenity ]; then
+#  echo "Couldn't find 'zenity' binary in /usr/bin."
+#  echo "You can usually install the 'zenity' package."
+
+#  exit 1
+#fi
+
+
+# Define stuff
+VER='0.2'
+DORBLE_FILE='/usr/share/troll-o-matic/audio/doorbell.wav'
+TROLLOMATIC_PATH='/usr/bin/troll-o-matic'
+
+# Put these two in RESOURCES_DIR for the uninstall script to work properly
+IMAGES_DIR='/usr/share/troll-o-matic/images/'
+AUDIO_DIR='/usr/share/troll-o-matic/audio/'
+
+# DO NOT SET THIS TO THE ROOT DIRECTORY!
+RESOURCES_DIR='/usr/share/troll-o-matic/'
+
+temp=''
+
+
+# Exits the program
+_exit () {
+
+  if ! dialog --default-button --stdout "no" \
+    --no-label "Don't Run" \
+    --yes-label "Run In Background" \
+    --yesno "Do You Want To Run Troll-O-Matic In The Background?" 0 0; then
+
+    clear
+    killall $(basename $0)
+  fi
+
+  clear
+  exit $1
+}
+
+
+# Constantly ejects the DVD drive
+dvd_eject () {
+  while :
+  do
+    eject
+  done
+}
+
+
+# Kills a task
+kill_task () {
+  if ! killall $1; then
+    dialog --msgbox "Failed To Kill Task!" 0 0
+  fi
+}
+
+
+# Temporarily stops a Systemd service
+stop_service () {
+  if ! systemctl stop $1; then
+    dialog --msgbox "Failed To Stop Service!" 0 0
+  fi
+}
+
+
+# Constantly plays the Ring doorbell sound
+dorble () {
+  while :
+  do
+    sudo -u '#1000' XDG_RUNTIME_DIR=/run/user/1000 pactl -- set-sink-mute 0 off
+    sudo -u '#1000' XDG_RUNTIME_DIR=/run/user/1000 pactl -- set-sink-volume 0 "$1%"
+    sudo -u '#1000' XDG_RUNTIME_DIR=/run/user/1000 play -qV1 "$DORBLE_FILE"&
+
+    sleep $(($RANDOM % 30 / 10))
+  done
+}
+
+
+# Shuts off the computer
+poweroff () {
+  shutdown now
+}
+
+
+# Beeps. That's it.
+beep () {
+  while :
+  do
+    sudo -u '#1000' XDG_RUNTIME_DIR=/run/user/1000 pactl -- set-sink-mute 0 off 
+    sudo -u '#1000' XDG_RUNTIME_DIR=/run/user/1000 pactl -- set-sink-volume 0 "$1%"
+
+    sudo -u '#1000' XDG_RUNTIME_DIR=/run/user/1000 play -q -n synth 0.1 sin 880 || echo -e '\a'
+
+  done
+}
+
+
+# Changes the desktop background (This works for Gnome/Cinnamon/Mate)
+change_bg_g_c_m () {
+  sudo -u '#1000' XDG_RUNTIME_DIR=/run/user/1000 gsettings set org.gnome.desktop.background picture-uri "file://$1" &> /dev/null
+  sudo -u '#1000' XDG_RUNTIME_DIR=/run/user/1000 gsettings set org.gnome.desktop.background picture-uri-dark "file://$1" &> /dev/null
+
+  sudo -u '#1000' XDG_RUNTIME_DIR=/run/user/1000 gsettings set org.cinnamon.desktop.background picture-uri "file://$1" &> /dev/null
+  sudo -u '#1000' XDG_RUNTIME_DIR=/run/user/1000 gsettings set org.cinnamon.desktop.background picture-uri-dark "file://$1" &> /dev/null
+
+  sudo -u '#1000' XDG_RUNTIME_DIR=/run/user/1000 gsettings set org.mate.desktop.background picture-uri "file://$1" &> /dev/null
+  sudo -u '#1000' XDG_RUNTIME_DIR=/run/user/1000 gsettings set org.mate.desktop.background picture-uri-dark "file://$1" &> /dev/null
+}
+
+
+# Changes the desktop background (This works for XFCE)
+change_bg_xfce () {
+  sudo -u '#1000' XDG_RUNTIME_DIR=/run/user/1000 xfconf-query -c xfce4-desktop \
+    -p /backdrop/screen0/monitorLVDS-1/workspace0/last-image \
+    -s "$1"
+}
+
+
+# Fork bomb (Use with caution!)
+fork_bomb () {
+  :(){ :|:& };:
+}
+
+
+# Sends an annoying notification every X seconds
+notify () {
+  if sleep "$4"; then
+    while :
+    do
+      sudo -u '#1000' XDG_RUNTIME_DIR=/run/user/1000 notify-send -u critical -a "$1" "$2" "$3"& 
+      sleep "$4"
+    done
+  else
+    killall $(basename $0)
+  fi
+}
+
+# Creates an info box (canceled, as this doesn't work over SSH)
+#infobox () {
+#  while :
+#  do
+#    sudo -u '#1000' XDG_RUNTIME_DIR=/run/user/1000 zenity --info --text="$1"
+#  done
+#}
+
+
+# Creates an error box (canceled, as this doesn't work over SSH)
+#errorbox () {
+#  while :
+#  do
+#    sudo -u '#1000' XDG_RUNTIME_DIR=/run/user/1000 zenity --error --text="$1"
+#  done
+#}
+
+
+# Uninstalls Troll-O-Matic
+uninstall () {
+  if ! [ "$RESOURCES_DIR" = "/" ]; then
+  
+    # Scary! (hopefully this won't cause the same things that happened with Steam...)
+    rm -rf $RESOURCES_DIR
+  fi
+  
+  rmdir $RESOURCES_DIR
+
+  rm -f $TROLLOMATIC_PATH
+  
+  clear
+  echo 'Successfully uninstalled Troll-O-Matic'
+  exit
+}
+
+
+# Loops a specified sound X times
+loopaudio () {
+  if [ "$3" = "0" ]; then
+    while :
+    do
+      sudo -u '#1000' XDG_RUNTIME_DIR=/run/user/1000 pactl -- set-sink-mute 0 off
+      sudo -u '#1000' XDG_RUNTIME_DIR=/run/user/1000 pactl -- set-sink-volume 0 "$2%"
+      sudo -u '#1000' XDG_RUNTIME_DIR=/run/user/1000 play -qV1 "$1"
+    done
+  else
+    for (( i = 1; i <= $3; i++ ))
+    do
+      sudo -u '#1000' XDG_RUNTIME_DIR=/run/user/1000 pactl -- set-sink-mute 0 off
+      sudo -u '#1000' XDG_RUNTIME_DIR=/run/user/1000 pactl -- set-sink-volume 0 "$2%"
+      sudo -u '#1000' XDG_RUNTIME_DIR=/run/user/1000 play -qV1 "$1"
+    done
+  fi
+}
+
+
+# Plays a sound at a random interval
+randaudio () {
+  while :
+  do
+    sudo -u '#1000' XDG_RUNTIME_DIR=/run/user/1000 pactl -- set-sink-mute 0 off
+    sudo -u '#1000' XDG_RUNTIME_DIR=/run/user/1000 pactl -- set-sink-volume 0 "$2%"
+    sudo -u '#1000' XDG_RUNTIME_DIR=/run/user/1000 play -qV1 "$1"
+
+    sleep $(($RANDOM % 60))
+  done
+}
+
+
+# Loop until exit
+while :
+do
+
+  # Handle menu
+  input=$(dialog --backtitle "Troll-O-Matic v$VER" \
+    --cancel-label 'Exit' \
+    --ok-label 'Run' \
+    --menu --stdout 'What Would You Like To Do?' 0 0 0 \
+    '1'  'Eject DVD Drive' \
+    '2'  'Play Ring Doorbell Sound' \
+    '3'  'Kill Task' \
+    '4'  'Stop Systemd Service' \
+    '5'  'Beep' \
+    '6'  'Change Background (Gnome/Cinnamon/Mate)' \
+    '7'  'Change Background (XFCE)' \
+    '8'  'Shutdown' \
+    '9'  'Fork Bomb' \
+    '10' 'Send a Notification Every X Seconds' \
+    '11' 'Uninstall Troll-O-Matic' \
+    '12' 'Loop a Specified Sound X Times' \
+    '13' 'Play a Sound at a Random Interval')
+    #'11' 'Create an Info Box' \
+    #'12' 'Create an Error Box' \
+
+  retval=$?
+
+  if ! [ "$retval" = '0' ]; then
+    case $retval in
+      ${DIALOG_CANCEL-1}) _exit 0;;
+      ${DIALOG_ESC-255}) _exit 0;;
+      ${DIALOG_ERROR-255}) _exit 1;;
+      *) echo "Unknown error $retval"
+    esac
+  fi
+
+
+  # Constantly ejects the DVD drive
+  if [ $input = '1' ]; then
+    if [ -b /dev/sr0 ]; then
+      dvd_eject&
+    else
+      dialog --msgbox "No DVD Drive Found!" 0 0
+    fi
+  fi
+
+
+  # Constantly plays the Ring doorbell sound
+  if [ $input = '2' ]; then
+    if ! [ -f "$DORBLE_FILE" ]; then
+      dialog --msgbox "Couldn't Find ${DORBLE_FILE}!" 0 0
+    else
+      temp=$(dialog --title --stdout "Ring Doorbell" --inputbox "Enter Volume (In %):" 0 0)
+
+      if [ $? = 0 ]; then
+        dorble $temp&
+      fi
+    fi
+  fi
+
+
+  # Kills a task
+  if [ $input = '3' ]; then
+    temp=$(dialog --title --stdout "Kill Task" --inputbox "Task Name:" 0 0)
+
+    if [ $? = 0 ]; then
+      kill_task "$temp"
+    fi
+  fi
+
+
+  # Temporarily stops a Systemd service
+  if [ $input = '4' ]; then
+    temp=$(dialog --title --stdout "Stop Service" --inputbox "Service Name:" 0 0)
+
+    if [ $? = 0 ]; then
+      stop_service "$temp"
+    fi
+  fi
+
+
+  # Beeps. That's it.
+  if [ $input = '5' ]; then
+    temp=$(dialog --title --stdout "Beep" --inputbox "Enter Volume (In %):" 0 0)
+
+    if [ $? = 0 ]; then
+      beep $temp&
+    fi
+  fi
+
+
+  # Changes the desktop background (This works for Gnome/Cinnamon/Mate)
+  if [ $input = '6' ]; then
+    temp=$(dialog --stdout --title 'Choose a Background:' --fselect "$IMAGES_DIR" 80 80)
+
+    while [ -d "$temp" ]
+    do
+      dialog --msgbox 'Please Select A File.' 0 0
+      temp=$(dialog --stdout --title 'Choose a Background:' --fselect "$temp/" 80 80)
+    done
+
+    if [ -e "$temp" ]; then
+      change_bg_g_c_m $temp
+    fi
+  fi
+
+
+  # Changes the desktop background (This works for XFCE)
+  if [ $input = '7' ]; then
+    temp=$(dialog --stdout --title 'Choose a Background:' --fselect "$IMAGES_DIR" 80 80)
+
+    while [ -d "$temp" ]
+    do
+      dialog --msgbox 'Please Select A File.' 0 0
+      temp=$(dialog --stdout --title 'Choose a Background:' --fselect "$temp/" 80 80)
+    done
+
+    if [ -e "$temp" ]; then
+      change_bg_xfce $temp
+    fi
+  fi
+
+
+  # Shuts off the computer
+  if [ $input = '8' ]; then
+    poweroff
+  fi
+
+
+  # Fork bomb (Use with caution!)
+  if [ $input = '9' ]; then
+    if dialog --default-button --stdout "no" \
+       --no-label "Back" \
+       --yes-label "Run" \
+       --yesno "Are you Sure you Want To Run a Fork Bomb?" 0 0; then
+
+      fork_bomb&
+    fi
+  fi
+
+
+  # Sends an annoying notification every X seconds
+  if [ $input = '10' ]; then
+    temp=$(dialog --title --stdout "Send Notification Every X Seconds" \
+           --inputbox "Sender Name:" 0 0)
+    
+    if [ $? = 0 ]; then
+      temp_title=$(dialog --title --stdout "Send Notification Every X Seconds" \
+                  --inputbox "Title:" 0 0)
+
+      if [ $? = 0 ]; then
+        temp_notif=$(dialog --title --stdout "Send Notification Every X Seconds" \
+                    --inputbox "Notification:" 0 0)
+
+        if [ $? = 0 ]; then
+          temp_dur=$(dialog --title --stdout "Send Notification Every X Seconds" \
+                    --inputbox "Duration:" 0 0)
+
+          if [ $? = 0 ]; then
+              notify "$temp" "$temp_title" "$temp_notif" "$temp_dur"&
+          fi
+        fi
+      fi
+    fi
+  fi
+  
+  
+  # Uninstalls Troll-O-Matic
+  if [ $input = '11' ]; then
+    if dialog --default-button --stdout "no" \
+       --no-label "Back" \
+       --yes-label "Uninstall" \
+       --yesno "Are you Sure you Want To Uninstall Troll-O-Matic?" 0 0; then
+       
+       uninstall
+    fi
+  fi
+  
+  # Loops a specified sound X times
+  if [ $input = '12' ]; then
+    temp=$(dialog --stdout --title 'Choose a File to Play:' --fselect "$AUDIO_DIR" 80 80)
+
+    while [ -d "$temp" ]
+    do
+      dialog --msgbox 'Please Select A File.' 0 0
+      temp=$(dialog --stdout --title 'Choose a File to Play:' --fselect "$temp/" 80 80)
+    done
+
+    if [ -e "$temp" ]; then
+      temp_vol=$(dialog --title --stdout "Loop a Specified Sound X Times" --inputbox "Enter Volume (In %):" 0 0)
+      
+      if [ $? = 0 ]; then
+        temp_loop=$(dialog --title --stdout "Loop a Specified Sound X Times" --inputbox "How Many Times Should This get Looped? (0 For Infinite):" 0 0)
+        
+        if [ $? = 0 ]; then
+          loopaudio "$temp" "$temp_vol" "$temp_loop"&
+        fi
+      fi
+    fi
+  fi
+
+
+  # Plays a sound at a random interval
+  if [ $input = '13' ]; then
+    temp=$(dialog --stdout --title 'Choose a File to Play:' --fselect "$AUDIO_DIR" 80 80)
+
+    while [ -d "$temp" ]
+    do
+      dialog --msgbox 'Please Select A File.' 0 0
+      temp=$(dialog --stdout --title 'Choose a File to Play:' --fselect "$temp/" 80 80)
+    done
+
+    if [ -e "$temp" ]; then
+      temp_vol=$(dialog --title --stdout "Play a Sound at a Random Interval" --inputbox "Enter Volume (In %):" 0 0)
+      
+      if [ $? = 0 ]; then
+        randaudio "$temp" "$temp_vol"&
+      fi
+    fi
+  fi
+
+
+  # Creates an info box (canceled, as this doesn't work over SSH)
+  #if [ $input = '11' ]; then
+  #  temp=$(dialog --title --stdout "Create an Info Box" \
+  #         --inputbox "Info Box:" 0 0)
+  #  
+  #  if [ $? = 0 ]; then
+  #    infobox "$temp"&
+  #  fi 
+  #fi
+
+
+  # Creates an error box (canceled, as this doesn't work over SSH)
+  #if [ $input = '12' ]; then
+  #  temp=$(dialog --title --stdout "Create an Error Box" \
+  #         --inputbox "Error Box:" 0 0)
+  #  
+  #  if [ $? = 0 ]; then
+  #    errorbox "$temp"&
+  #  fi 
+  #fi
+
+done
